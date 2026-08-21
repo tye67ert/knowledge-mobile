@@ -33,16 +33,18 @@ jobs:
       - name: Accept Android licenses
         run: yes | flutter doctor --android-licenses
 
-      - name: Build Flet app (first attempt, ignore failure)
+      - name: Generate Flet project (will fail at Gradle, ignore)
         run: |
           flet build apk --project main.py --org com.knowledge || true
 
-      - name: Patch AGP version
+      - name: Patch AGP and Kotlin versions
         run: |
           cd build/flutter/android
-          sed -i 's/8\.3\.1/8\.6\.0/g' settings.gradle build.gradle
+          sed -i 's/8\.3\.1/8\.6\.0/g' settings.gradle
+          sed -i 's/1\.9\.24/2\.0\.21/g' settings.gradle
+          echo "android.newDsl=false" >> gradle.properties
 
-      - name: Build APK manually
+      - name: Build APK with Flutter directly
         run: |
           cd build/flutter
           flutter build apk --release
