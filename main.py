@@ -1,20 +1,24 @@
+import os
+from pathlib import Path
+
+# ---------- 应用私有目录（用于辅助数据库） ----------
+APP_DIR = Path(os.path.dirname(__file__)) / "data"
+APP_DIR.mkdir(parents=True, exist_ok=True)
+
 import flet as ft
 import sqlite3
-import os
 import random
 import json
-import time
-from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime
 
 # ---------- 数据库路径 ----------
-DB_PATH = "/sdcard/Download/knowledge.db"
+DB_PATH = "/sdcard/Download/knowledge.db"          # 主数据库（106GB）
 FAVORITE_DB = str(APP_DIR / "favorites.db")
 NOTE_DB = str(APP_DIR / "notes.db")
 HISTORY_DB = str(APP_DIR / "history.db")
 USER_DB = str(APP_DIR / "users.db")
 
-# ---------- 数据库初始化 ----------
+# ---------- 辅助数据库初始化 ----------
 def init_favorites():
     conn = sqlite3.connect(FAVORITE_DB)
     c = conn.cursor()
