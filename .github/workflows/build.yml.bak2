@@ -1,0 +1,37 @@
+name: Build APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install flet
+
+      - name: Build APK
+        env:
+          FLET_YES: 1
+        run: |
+          flet build apk --org com.yourcompany --product "知识图谱" --yes \
+            --android-permissions android.permission.READ_EXTERNAL_STORAGE \
+            android.permission.WRITE_EXTERNAL_STORAGE \
+            android.permission.MANAGE_EXTERNAL_STORAGE
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: knowledge-graph-app
+          path: build/apk/*.apk

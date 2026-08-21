@@ -1,0 +1,718 @@
+import os
+from pathlib import Path
+
+# ---------- 应用私有目录（用于辅助数据库） ----------
+APP_DIR = Path(os.path.dirname(__file__)) / "data"
+APP_DIR.mkdir(parents=True, exist_ok=True)
+
+import flet as ft
+import sqlite3
+import random
+import json
+from datetime import datetime
+
+# ---------- 数据库路径 ----------
+DB_PATH = "/sdcard/Download/knowledge.db"          # 主数据库（106GB）
+FAVORITE_DB = str(APP_DIR / "favorites.db")
+NOTE_DB = str(APP_DIR / "notes.db")
+HISTORY_DB = str(APP_DIR / "history.db")
+USER_DB = str(APP_DIR / "users.db")
+
+# ---------- 辅助数据库初始化 ----------
+def init_favorites():
+    conn = sqlite3.connect(FAVORITE_DB)
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS favorites (
+        id INTEGER PRIMARY KEY,
+        title TEXT, content TEXT, source TEXT,
+        added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )''')
+    conn.commit()
+    conn.close()
+
+def init_notes():
+    conn = sqlite3.connect(NOTE_DB)
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS notes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        item_id INTEGER,
+        note TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )''')
+    conn.commit()
+    conn.close()
+
+def init_history():
+    conn = sqlite3.connect(HISTORY_DB)
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        query TEXT,
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS quiz_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        item_id INTEGER,
+        correct BOOLEAN,
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )''')
+    conn.commit()
+    conn.close()
+
+def init_users():
+    conn = sqlite3.connect(USER_DB)
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT UNIQUE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )''')
+    conn.commit()
+    conn.close()
+
+init_favorites()
+init_notes()
+init_history()
+init_users()
+
+# ---------- 工具函数 ----------
+def add_history(query):
+    conn = sqlite3.connect(HISTORY_DB)
+    c = conn.cursor()
+    c.execute("INSERT INTO history (query) VALUES (?)", (query,))
+    conn.commit()
+    conn.close()
+
+def add_quiz_history(item_id, correct):
+    conn = sqlite3.connect(HISTORY_DB)
+    c = conn.cursor()
+    c.execute("INSERT INTO quiz_history (item_id, correct) VALUES (?, ?)", (item_id, correct))
+    conn.commit()
+    conn.close()
+
+def get_quiz_stats():
+    conn = sqlite3.connect(HISTORY_DB)
+    c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM quiz_history WHERE correct=1")
+    correct = c.fetchone()[0]
+    c.execute("SELECT COUNT(*) FROM quiz_history WHERE correct=0")
+    wrong = c.fetchone()[0]
+    conn.close()
+    return correct, wrong
+
+def get_recent_history(limit=10):
+    conn = sqlite3.connect(HISTORY_DB)
+    c = conn.cursor()
+    c.execute("SELECT query, timestamp FROM history ORDER BY timestamp DESC LIMIT ?", (limit,))
+    rows = c.fetchall()
+    conn.close()
+    return rows
+
+def get_favorites():
+    conn = sqlite3.connect(FAVORITE_DB)
+    c = conn.cursor()
+    c.execute("SELECT id, title, content, source FROM favorites")
+    rows = c.fetchall()
+    conn.close()
+    return [{"id": r[0], "title": r[1], "content": r[2], "source": r[3]} for r in rows]
+
+def add_favorite(item):
+    conn = sqlite3.connect(FAVORITE_DB)
+    c = conn.cursor()
+    c.execute("INSERT OR IGNORE INTO favorites (id, title, content, source) VALUES (?, ?, ?, ?)",
+              (item["id"], item["title"], item["content"], item["source"]))
+    conn.commit()
+    conn.close()
+
+def remove_favorite(item_id):
+    conn = sqlite3.connect(FAVORITE_DB)
+    c = conn.cursor()
+    c.execute("DELETE FROM favorites WHERE id = ?", (item_id,))
+    conn.commit()
+    conn.close()
+
+def get_note(item_id):
+    conn = sqlite3.connect(NOTE_DB)
+    c = conn.cursor()
+    c.execute("SELECT note FROM notes WHERE item_id=?", (item_id,))
+    row = c.fetchone()
+    conn.close()
+    return row[0] if row else None
+
+def save_note(item_id, note):
+    conn = sqlite3.connect(NOTE_DB)
+    c = conn.cursor()
+    c.execute("REPLACE INTO notes (item_id, note, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)", (item_id, note))
+    conn.commit()
+    conn.close()
+
+def delete_note(item_id):
+    conn = sqlite3.connect(NOTE_DB)
+    c = conn.cursor()
+    c.execute("DELETE FROM notes WHERE item_id=?", (item_id,))
+    conn.commit()
+    conn.close()
+
+# ---------- 数据访问类 ----------
+class KnowledgeDB:
+    def __init__(self):
+        self.conn = None
+        self.cursor = None
+        self.connect()
+
+    def connect(self):
+        if not os.path.exists(DB_PATH):
+            raise FileNotFoundError(f"数据库文件未找到: {DB_PATH}")
+        self.conn = sqlite3.connect(DB_PATH)
+        self.conn.row_factory = sqlite3.Row
+        self.cursor = self.conn.cursor()
+
+    def search(self, query, limit=20, offset=0):
+        if not query:
+            return []
+        add_history(query)
+        self.cursor.execute(
+            "SELECT id, title, content, source FROM knowledge_items "
+            "WHERE title LIKE ? OR content LIKE ? "
+            "LIMIT ? OFFSET ?",
+            (f'%{query}%', f'%{query}%', limit, offset)
+        )
+        return self.cursor.fetchall()
+
+    def get_random_question(self, exclude_ids=None):
+        if exclude_ids is None:
+            exclude_ids = []
+        if exclude_ids:
+            placeholders = ','.join(['?'] * len(exclude_ids))
+            query = f"SELECT id, title, content FROM knowledge_items WHERE id NOT IN ({placeholders}) ORDER BY RANDOM() LIMIT 1"
+            self.cursor.execute(query, exclude_ids)
+        else:
+            self.cursor.execute("SELECT id, title, content FROM knowledge_items ORDER BY RANDOM() LIMIT 1")
+        return self.cursor.fetchone()
+
+    def get_graph_data(self, limit=50):
+        fav_ids = [f["id"] for f in get_favorites()]
+        if fav_ids:
+            placeholders = ','.join(['?'] * len(fav_ids))
+            self.cursor.execute(f"SELECT id, title FROM knowledge_items WHERE id IN ({placeholders}) LIMIT ?", (fav_ids + [limit]))
+        else:
+            self.cursor.execute("SELECT id, title FROM knowledge_items ORDER BY RANDOM() LIMIT ?", (limit,))
+        rows = self.cursor.fetchall()
+        nodes = []
+        edges = []
+        for row in rows:
+            nodes.append({"id": str(row["id"]), "label": row["title"][:20], "group": 1})
+        for i in range(len(nodes)-1):
+            edges.append({"from": nodes[i]["id"], "to": nodes[i+1]["id"]})
+        return nodes, edges
+
+    def get_recommendations(self, limit=10):
+        favs = get_favorites()
+        fav_ids = [f["id"] for f in favs]
+        if fav_ids:
+            placeholders = ','.join(['?'] * len(fav_ids))
+            self.cursor.execute(f"SELECT id, title, content FROM knowledge_items WHERE id NOT IN ({placeholders}) ORDER BY RANDOM() LIMIT ?", (limit,))
+        else:
+            recent = get_recent_history(5)
+            if recent:
+                keywords = [r[0] for r in recent]
+                query = "SELECT id, title, content FROM knowledge_items WHERE " + " OR ".join(["title LIKE ?"]*len(keywords))
+                params = [f'%{k}%' for k in keywords]
+                self.cursor.execute(query, params[:limit])
+            else:
+                self.cursor.execute("SELECT id, title, content FROM knowledge_items ORDER BY RANDOM() LIMIT ?", (limit,))
+        return self.cursor.fetchall()
+
+    def ask_question(self, question, limit=3):
+        keywords = question.split()
+        if not keywords:
+            return []
+        query = "SELECT id, title, content, source FROM knowledge_items WHERE " + " OR ".join(["content LIKE ?"]*len(keywords))
+        params = [f'%{k}%' for k in keywords]
+        self.cursor.execute(query, params[:limit])
+        return self.cursor.fetchall()
+
+    def close(self):
+        if self.conn:
+            self.conn.close()
+
+# ---------- Flet 主应用 ----------
+class KnowledgeApp:
+    def __init__(self):
+        self.db = KnowledgeDB()
+        self.favorites = get_favorites()
+        self.current_results = []
+        self.quiz_answered_ids = []
+        self.page = None
+        self.search_field = None
+        self.content_area = None
+        self.tabs = None
+        self.current_user = None
+
+    def build(self, page: ft.Page):
+        self.page = page
+        page.title = "知识图谱"
+        page.theme_mode = ft.ThemeMode.DARK
+        page.bgcolor = "#0D1117"
+        page.padding = 0
+        if not self.current_user:
+            self.show_login()
+
+    def show_login(self):
+        dlg = ft.AlertDialog(
+            title=ft.Text("选择用户"),
+            content=ft.Column([
+                ft.Text("请输入用户名（或新建）"),
+                ft.TextField(hint_text="用户名", on_submit=lambda e: self.login(e.control.value)),
+            ]),
+            actions=[
+                ft.TextButton("登录", on_click=lambda e: self.login(dlg.content.controls[1].value)),
+            ],
+        )
+        self.page.dialog = dlg
+        dlg.open = True
+        self.page.update()
+
+    def login(self, username):
+        if not username:
+            return
+        conn = sqlite3.connect(USER_DB)
+        c = conn.cursor()
+        c.execute("INSERT OR IGNORE INTO users (username) VALUES (?)", (username,))
+        conn.commit()
+        conn.close()
+        self.current_user = username
+        self.page.dialog.open = False
+        self.page.update()
+        self.build_main()
+
+    def build_main(self):
+        appbar = ft.AppBar(
+            title=ft.Text(f"知识图谱 · {self.current_user}", size=24, weight=ft.FontWeight.W_300, color="#F0F0F0"),
+            center_title=True,
+            bgcolor="#161B22",
+            elevation=0,
+            actions=[
+                ft.IconButton(ft.icons.SETTINGS_OUTLINED, on_click=self.show_settings),
+            ],
+        )
+
+        self.search_field = ft.TextField(
+            hint_text="搜索知识...",
+            border=ft.InputBorder.UNDERLINE,
+            filled=True,
+            fill_color="#21262D",
+            text_style=ft.TextStyle(color="#F0F0F0", size=16),
+            hint_style=ft.TextStyle(color="#8B949E", size=16),
+            prefix_icon=ft.icons.SEARCH,
+            prefix_icon_color="#58A6FF",
+            on_submit=self.on_search,
+            expand=True,
+        )
+        search_btn = ft.IconButton(
+            icon=ft.icons.ARROW_FORWARD,
+            icon_color="#58A6FF",
+            on_click=self.on_search,
+        )
+
+        self.tabs = ft.Tabs(
+            selected_index=0,
+            tabs=[
+                ft.Tab(text="搜索", icon=ft.icons.SEARCH),
+                ft.Tab(text="图谱", icon=ft.icons.SHARE),
+                ft.Tab(text="测验", icon=ft.icons.QUIZ),
+                ft.Tab(text="收藏", icon=ft.icons.FAVORITE),
+                ft.Tab(text="问答", icon=ft.icons.CHAT),
+                ft.Tab(text="推荐", icon=ft.icons.RECOMMEND),
+                ft.Tab(text="分析", icon=ft.icons.ANALYTICS),
+            ],
+            on_change=self.tab_changed,
+        )
+
+        self.content_area = ft.Column(
+            expand=True,
+            scroll=ft.ScrollMode.AUTO,
+            spacing=10,
+        )
+
+        main_content = ft.Column(
+            [
+                ft.Row([self.search_field, search_btn], spacing=10, alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                self.tabs,
+                self.content_area,
+            ],
+            spacing=10,
+            expand=True,
+        )
+
+        self.page.add(
+            appbar,
+            ft.Container(content=main_content, padding=ft.padding.all(10), expand=True),
+        )
+
+        self.tab_changed(None)
+
+    def tab_changed(self, e):
+        self.content_area.controls.clear()
+        index = self.tabs.selected_index
+        if index == 0:
+            self.show_search_results()
+        elif index == 1:
+            self.show_graph()
+        elif index == 2:
+            self.show_quiz()
+        elif index == 3:
+            self.show_favorites()
+        elif index == 4:
+            self.show_qa()
+        elif index == 5:
+            self.show_recommendations()
+        elif index == 6:
+            self.show_analytics()
+        self.page.update()
+
+    def on_search(self, e):
+        query = self.search_field.value.strip()
+        if not query:
+            self.content_area.controls.clear()
+            self.content_area.controls.append(ft.Text("请输入关键词", color="#8B949E"))
+            self.page.update()
+            return
+        results = self.db.search(query, limit=50)
+        self.current_results = results
+        self.show_search_results()
+
+    def show_search_results(self):
+        self.content_area.controls.clear()
+        if not self.current_results:
+            self.content_area.controls.append(ft.Text("未找到结果", color="#8B949E"))
+            self.page.update()
+            return
+        for row in self.current_results:
+            is_fav = any(f["id"] == row["id"] for f in self.favorites)
+            note = get_note(row["id"])
+            card = ft.Card(
+                content=ft.Container(
+                    content=ft.Column([
+                        ft.Text(row["title"], weight=ft.FontWeight.BOLD, size=16, color="#F0F0F0"),
+                        ft.Text(row["content"][:200] + ("..." if len(row["content"])>200 else ""), size=13, color="#C9D1D9"),
+                        ft.Row([
+                            ft.Text(f"来源: {row['source'] or '未知'}", size=11, color="#8B949E"),
+                            ft.Row([
+                                ft.IconButton(
+                                    icon=ft.icons.FAVORITE if is_fav else ft.icons.FAVORITE_BORDER,
+                                    icon_size=20,
+                                    icon_color="#FFD700" if is_fav else "#8B949E",
+                                    on_click=lambda e, row=row: self.toggle_favorite(row),
+                                ),
+                                ft.IconButton(
+                                    icon=ft.icons.NOTE_ADD,
+                                    icon_size=20,
+                                    icon_color="#58A6FF",
+                                    on_click=lambda e, row=row: self.show_note_dialog(row),
+                                ),
+                            ]),
+                        ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                        ft.Text(f"📝 {note[:50]}..." if note else "", size=11, color="#FFD700") if note else ft.Container(),
+                    ]),
+                    padding=10,
+                )
+            )
+            self.content_area.controls.append(card)
+        self.page.update()
+
+    def toggle_favorite(self, item):
+        if any(f["id"] == item["id"] for f in self.favorites):
+            remove_favorite(item["id"])
+        else:
+            add_favorite(item)
+        self.favorites = get_favorites()
+        self.show_search_results()
+        self.page.update()
+
+    def show_note_dialog(self, item):
+        existing = get_note(item["id"])
+        dlg = ft.AlertDialog(
+            title=ft.Text("笔记"),
+            content=ft.TextField(
+                hint_text="输入笔记...",
+                multiline=True,
+                min_lines=3,
+                value=existing or "",
+            ),
+            actions=[
+                ft.TextButton("保存", on_click=lambda e: self.save_note_from_dlg(item["id"], dlg.content)),
+                ft.TextButton("删除", on_click=lambda e: self.delete_note_from_dlg(item["id"], dlg)),
+                ft.TextButton("取消", on_click=lambda e: self.close_dlg(dlg)),
+            ],
+        )
+        self.page.dialog = dlg
+        dlg.open = True
+        self.page.update()
+
+    def save_note_from_dlg(self, item_id, field):
+        note = field.value.strip()
+        if note:
+            save_note(item_id, note)
+        self.close_dlg(self.page.dialog)
+        self.show_search_results()
+
+    def delete_note_from_dlg(self, item_id, dlg):
+        delete_note(item_id)
+        self.close_dlg(dlg)
+        self.show_search_results()
+
+    def close_dlg(self, dlg):
+        dlg.open = False
+        self.page.update()
+
+    def show_favorites(self):
+        self.content_area.controls.clear()
+        favs = get_favorites()
+        if not favs:
+            self.content_area.controls.append(ft.Text("暂无收藏", color="#8B949E"))
+            self.page.update()
+            return
+        for row in favs:
+            note = get_note(row["id"])
+            card = ft.Card(
+                content=ft.Container(
+                    content=ft.Column([
+                        ft.Text(row["title"], weight=ft.FontWeight.BOLD, size=16, color="#F0F0F0"),
+                        ft.Text(row["content"][:200] + ("..." if len(row["content"])>200 else ""), size=13, color="#C9D1D9"),
+                        ft.Row([
+                            ft.Text(f"来源: {row['source'] or '未知'}", size=11, color="#8B949E"),
+                            ft.Row([
+                                ft.IconButton(
+                                    icon=ft.icons.DELETE,
+                                    icon_size=20,
+                                    icon_color="#ef5350",
+                                    on_click=lambda e, row=row: self.remove_favorite_item(row),
+                                ),
+                                ft.IconButton(
+                                    icon=ft.icons.NOTE,
+                                    icon_size=20,
+                                    icon_color="#58A6FF",
+                                    on_click=lambda e, row=row: self.show_note_dialog(row),
+                                ),
+                            ]),
+                        ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                        ft.Text(f"📝 {note[:50]}..." if note else "", size=11, color="#FFD700") if note else ft.Container(),
+                    ]),
+                    padding=10,
+                )
+            )
+            self.content_area.controls.append(card)
+        self.page.update()
+
+    def remove_favorite_item(self, item):
+        remove_favorite(item["id"])
+        self.favorites = get_favorites()
+        self.show_favorites()
+        self.page.update()
+
+    def show_graph(self):
+        self.content_area.controls.clear()
+        nodes, edges = self.db.get_graph_data(limit=30)
+        if not nodes:
+            self.content_area.controls.append(ft.Text("图谱数据不足", color="#8B949E"))
+            self.page.update()
+            return
+        fav_ids = [f["id"] for f in self.favorites]
+        conn = sqlite3.connect(HISTORY_DB)
+        c = conn.cursor()
+        for node in nodes:
+            node_id = int(node["id"])
+            if node_id in fav_ids:
+                node["color"] = "#4caf50"
+            else:
+                c.execute("SELECT correct FROM quiz_history WHERE item_id=? ORDER BY timestamp DESC LIMIT 1", (node_id,))
+                row = c.fetchone()
+                if row and row[0] == 1:
+                    node["color"] = "#ffa726"
+                else:
+                    node["color"] = "#ef5350"
+        conn.close()
+        grid = ft.GridView(expand=1, max_child_extent=150, spacing=10, run_spacing=10)
+        for node in nodes:
+            grid.controls.append(
+                ft.Container(
+                    content=ft.Text(node["label"], color="#F0F0F0", size=14),
+                    bgcolor=node.get("color", "#21262D"),
+                    padding=10,
+                    border_radius=10,
+                    alignment=ft.alignment.center,
+                )
+            )
+        self.content_area.controls.append(ft.Text("知识图谱（绿色=已掌握，橙色=学习中，红色=待学习）", size=14, color="#C9D1D9"))
+        self.content_area.controls.append(grid)
+        self.page.update()
+
+    def show_quiz(self):
+        self.content_area.controls.clear()
+        item = self.db.get_random_question(self.quiz_answered_ids)
+        if not item:
+            self.content_area.controls.append(ft.Text("🎉 所有题目已答完！", color="#58A6FF"))
+            self.page.update()
+            return
+        self.quiz_question = item
+        options = [item["title"][:100]]
+        self.db.cursor.execute("SELECT title FROM knowledge_items WHERE id != ? ORDER BY RANDOM() LIMIT 3", (item["id"],))
+        others = [row[0][:100] for row in self.db.cursor.fetchall()]
+        options.extend(others)
+        random.shuffle(options)
+        self.quiz_options = options
+        self.quiz_answer = item["title"][:100]
+
+        self.content_area.controls.append(ft.Text("📝 知识测验", size=20, weight=ft.FontWeight.BOLD, color="#58A6FF"))
+        self.content_area.controls.append(ft.Text(item["title"][:200] + "...", size=16, color="#F0F0F0"))
+        self.content_area.controls.append(ft.Text("以下哪个标题更匹配上述描述？", size=14, color="#C9D1D9"))
+
+        for idx, opt in enumerate(options):
+            btn = ft.ElevatedButton(
+                text=opt,
+                on_click=lambda e, idx=idx: self.check_quiz_answer(idx),
+                width=300,
+            )
+            self.content_area.controls.append(btn)
+        self.page.update()
+
+    def check_quiz_answer(self, idx):
+        selected = self.quiz_options[idx]
+        correct = self.quiz_answer
+        is_correct = (selected == correct)
+        add_quiz_history(self.quiz_question["id"], is_correct)
+        if is_correct:
+            self.quiz_answered_ids.append(self.quiz_question["id"])
+        self.content_area.controls.clear()
+        self.content_area.controls.append(ft.Text("✅ 正确！" if is_correct else "❌ 错误", color="#58A6FF" if is_correct else "#ef5350"))
+        self.content_area.controls.append(ft.Text(f"正确答案: {correct}", color="#F0F0F0"))
+        self.content_area.controls.append(ft.ElevatedButton("下一题", on_click=lambda e: self.show_quiz()))
+        self.page.update()
+
+    def show_qa(self):
+        self.content_area.controls.clear()
+        self.content_area.controls.append(ft.Text("💬 智能问答", size=20, weight=ft.FontWeight.BOLD, color="#58A6FF"))
+        q_field = ft.TextField(hint_text="输入你的问题...", expand=True, on_submit=self.answer_question)
+        ask_btn = ft.IconButton(ft.icons.SEND, on_click=self.answer_question)
+        self.content_area.controls.append(ft.Row([q_field, ask_btn], alignment=ft.MainAxisAlignment.SPACE_BETWEEN))
+        self.qa_result = ft.Column()
+        self.content_area.controls.append(self.qa_result)
+        self.page.update()
+
+    def answer_question(self, e):
+        # 获取问题
+        q_field = self.page.controls[-1].controls[-1].controls[0]
+        question = q_field.value.strip()
+        if not question:
+            return
+        results = self.db.ask_question(question, limit=3)
+        self.qa_result.controls.clear()
+        if results:
+            for row in results:
+                self.qa_result.controls.append(
+                    ft.Card(
+                        content=ft.Container(
+                            content=ft.Column([
+                                ft.Text(row["title"], weight=ft.FontWeight.BOLD, color="#F0F0F0"),
+                                ft.Text(row["content"][:300] + ("..." if len(row["content"])>300 else ""), size=13, color="#C9D1D9"),
+                                ft.Text(f"来源: {row['source'] or '未知'}", size=11, color="#8B949E"),
+                            ]),
+                            padding=10,
+                        )
+                    )
+                )
+        else:
+            self.qa_result.controls.append(ft.Text("未找到相关内容", color="#8B949E"))
+        self.page.update()
+
+    def show_recommendations(self):
+        self.content_area.controls.clear()
+        recs = self.db.get_recommendations(limit=10)
+        if not recs:
+            self.content_area.controls.append(ft.Text("暂无推荐", color="#8B949E"))
+            self.page.update()
+            return
+        self.content_area.controls.append(ft.Text("📚 为您推荐", size=20, weight=ft.FontWeight.BOLD, color="#58A6FF"))
+        for row in recs:
+            card = ft.Card(
+                content=ft.Container(
+                    content=ft.Column([
+                        ft.Text(row["title"], weight=ft.FontWeight.BOLD, size=16, color="#F0F0F0"),
+                        ft.Text(row["content"][:150] + ("..." if len(row["content"])>150 else ""), size=13, color="#C9D1D9"),
+                    ]),
+                    padding=10,
+                )
+            )
+            self.content_area.controls.append(card)
+        self.page.update()
+
+    def show_analytics(self):
+        self.content_area.controls.clear()
+        correct, wrong = get_quiz_stats()
+        total = correct + wrong
+        accuracy = (correct / total * 100) if total > 0 else 0
+        recent = get_recent_history(5)
+        fav_count = len(get_favorites())
+
+        self.content_area.controls.append(ft.Text("📊 学习分析", size=20, weight=ft.FontWeight.BOLD, color="#58A6FF"))
+        self.content_area.controls.append(ft.Text(f"总答题数: {total}", size=16, color="#F0F0F0"))
+        self.content_area.controls.append(ft.Text(f"正确: {correct}  |  错误: {wrong}", size=16, color="#F0F0F0"))
+        self.content_area.controls.append(ft.Text(f"正确率: {accuracy:.1f}%", size=16, color="#F0F0F0"))
+        self.content_area.controls.append(ft.Text(f"收藏数: {fav_count}", size=16, color="#F0F0F0"))
+        if recent:
+            self.content_area.controls.append(ft.Text("最近搜索:", size=16, weight=ft.FontWeight.BOLD, color="#58A6FF"))
+            for q, ts in recent:
+                self.content_area.controls.append(ft.Text(f"  • {q}  ({ts})", size=14, color="#C9D1D9"))
+        self.page.update()
+
+    def show_settings(self, e):
+        dlg = ft.AlertDialog(
+            title=ft.Text("设置"),
+            content=ft.Text(f"数据库: {DB_PATH}\n用户: {self.current_user}\n收藏: {FAVORITE_DB}\n笔记: {NOTE_DB}\n历史: {HISTORY_DB}"),
+            actions=[
+                ft.TextButton("切换用户", on_click=lambda e: self.switch_user()),
+                ft.TextButton("导出数据", on_click=self.export_data),
+                ft.TextButton("关闭", on_click=lambda e: self.close_dlg(dlg)),
+            ],
+        )
+        self.page.dialog = dlg
+        dlg.open = True
+        self.page.update()
+
+    def switch_user(self):
+        self.page.dialog.open = False
+        self.page.clean()
+        self.current_user = None
+        self.show_login()
+
+    def export_data(self, e):
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("SELECT id, title, content, source FROM knowledge_items LIMIT 100")
+        rows = c.fetchall()
+        conn.close()
+        data = [{"id": r[0], "title": r[1], "content": r[2], "source": r[3]} for r in rows]
+        json_str = json.dumps(data, indent=2, ensure_ascii=False)
+        try:
+            with open("/sdcard/Download/export.json", "w") as f:
+                f.write(json_str)
+        except:
+            pass
+        dlg = ft.AlertDialog(
+            title=ft.Text("导出数据"),
+            content=ft.Text("已导出前100条数据到 /sdcard/Download/export.json（仅作演示）"),
+            actions=[ft.TextButton("确定", on_click=lambda e: self.close_dlg(dlg))],
+        )
+        self.page.dialog = dlg
+        dlg.open = True
+        self.page.update()
+
+# ---------- 启动 ----------
+def main():
+    app = KnowledgeApp()
+    ft.app(target=app.build)
+
+if __name__ == "__main__":
+    main()
