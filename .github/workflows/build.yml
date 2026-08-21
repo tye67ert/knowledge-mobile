@@ -18,6 +18,11 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install flet
+      - name: Install Flutter SDK
+        run: |
+          git clone https://github.com/flutter/flutter.git -b stable --depth 1 $GITHUB_WORKSPACE/flutter
+          echo "$GITHUB_WORKSPACE/flutter/bin" >> $GITHUB_PATH
+          echo "FLET_FLUTTER_SDK_PATH=$GITHUB_WORKSPACE/flutter" >> $GITHUB_ENV
       - name: Build APK
         run: |
           flet build apk --project main.py --org com.knowledge \
