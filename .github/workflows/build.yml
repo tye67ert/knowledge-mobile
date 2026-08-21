@@ -23,7 +23,7 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.38.3'
-          channel: 'stable'
+          channel: stable
 
       - name: Set Flutter SDK path for Flet
         run: |
@@ -31,12 +31,11 @@ jobs:
           echo "FLUTTER_ROOT=${{ env.FLUTTER_ROOT }}" >> $GITHUB_ENV
 
       - name: Accept Android licenses
-        run: |
-          yes | flutter doctor --android-licenses
+        run: yes | flutter doctor --android-licenses
 
       - name: Build APK
         run: |
-          flet build apk --project main.py --org com.knowledge --flutter-args "--android-skip-build-dependency-validation"
+          flet build apk --project main.py --org com.knowledge
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
