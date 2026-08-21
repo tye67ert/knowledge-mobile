@@ -25,9 +25,13 @@ jobs:
           echo "FLET_FLUTTER_SDK_PATH=$GITHUB_WORKSPACE/flutter" >> $GITHUB_ENV
       - name: Accept Android licenses
         run: |
+          export PATH="$GITHUB_WORKSPACE/flutter/bin:$PATH"
           yes | flutter doctor --android-licenses
       - name: Build APK
         run: |
+          export PATH="$GITHUB_WORKSPACE/flutter/bin:$PATH"
+          export FLUTTER_ROOT="$GITHUB_WORKSPACE/flutter"
+          export FLET_FLUTTER_SDK_PATH="$GITHUB_WORKSPACE/flutter"
           flet build apk --project main.py --org com.knowledge \
             --android-permissions android.permission.READ_EXTERNAL_STORAGE \
             --android-permissions android.permission.WRITE_EXTERNAL_STORAGE \
