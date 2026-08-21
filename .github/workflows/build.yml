@@ -30,7 +30,7 @@ jobs:
           export PATH="$GITHUB_WORKSPACE/flutter/bin:$PATH"
           export FLET_FLUTTER_SDK_PATH="$GITHUB_WORKSPACE/flutter"
           export FLUTTER_ROOT="$GITHUB_WORKSPACE/flutter"
-          flet build apk --project main.py --org com.knowledge
+          flet build apk --project main.py --org com.knowledge --flutter-args "--android-skip-build-dependency-validation"
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
