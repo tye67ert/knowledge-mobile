@@ -33,10 +33,7 @@ jobs:
           export PATH="$GITHUB_WORKSPACE/flutter/bin:$PATH"
           export FLET_FLUTTER_SDK_PATH="$GITHUB_WORKSPACE/flutter"
           export FLUTTER_ROOT="$GITHUB_WORKSPACE/flutter"
-          flet build apk --project main.py --org com.knowledge \
-            --android-permissions android.permission.READ_EXTERNAL_STORAGE \
-            --android-permissions android.permission.WRITE_EXTERNAL_STORAGE \
-            --android-permissions android.permission.MANAGE_EXTERNAL_STORAGE
+          flet build apk --project main.py --org com.knowledge
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
