@@ -1,3 +1,4 @@
+import osnfrom pathlib import PathnnAPP_DIR = Path(os.path.dirname(__file__)) / "data"nAPP_DIR.mkdir(parents=True, exist_ok=True)n
 import flet as ft
 import sqlite3
 import os
@@ -9,10 +10,10 @@ from datetime import datetime, timedelta
 
 # ---------- 数据库路径 ----------
 DB_PATH = "/sdcard/Download/knowledge.db"
-FAVORITE_DB = "/sdcard/Download/favorites.db"
-NOTE_DB = "/sdcard/Download/notes.db"
-HISTORY_DB = "/sdcard/Download/history.db"
-USER_DB = "/sdcard/Download/users.db"
+FAVORITE_DB = str(APP_DIR / "favorites.db")
+NOTE_DB = str(APP_DIR / "notes.db")
+HISTORY_DB = str(APP_DIR / "history.db")
+USER_DB = str(APP_DIR / "users.db")
 
 # ---------- 数据库初始化 ----------
 def init_favorites():
