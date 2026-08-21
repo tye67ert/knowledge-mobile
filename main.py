@@ -1,4 +1,3 @@
-import osnfrom pathlib import PathnnAPP_DIR = Path(os.path.dirname(__file__)) / "data"nAPP_DIR.mkdir(parents=True, exist_ok=True)n
 import flet as ft
 import sqlite3
 import os
