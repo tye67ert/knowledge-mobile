@@ -37,27 +37,37 @@ jobs:
         run: |
           flet build apk --project main.py --org com.knowledge || true
 
-      - name: Find and set SERIOUS_PYTHON_SITE_PACKAGES
+      - name: Patch AGP, Kotlin, NDK versions and set SERIOUS_PYTHON_SITE_PACKAGES
         run: |
-          # 查找所有可能的 site-packages 目录
-          SITE_PACKAGES=$(find build/flutter -type d -name "site-packages" 2>/dev/null | head -n 1)
+          cd build/flutter/android
+          # 升级 AGP 到 8.9.1
+          sed -i 's/8\.3\.1/8\.9\.1/g' settings.gradle build.gradle app/build.gradle
+          # 升级 Kotlin 到 2.0.21
+          sed -i 's/1\.9\.24/2\.0\.21/g' settings.gradle build.gradle app/build.gradle
+          # 在 app/build.gradle 的 android 块中添加 ndkVersion
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('app/build.gradle')
+          content = p.read_text()
+          if 'ndkVersion' not in content:
+              content = content.replace('android {', 'android {\n    ndkVersion "28.2.13676358"')
+          p.write_text(content)
+          print(content)
+          PY
+          # 设置 SERIOUS_PYTHON_SITE_PACKAGES
+          SITE_PACKAGES=$(find .. -type d -name "site-packages" | head -n 1)
           if [ -z "$SITE_PACKAGES" ]; then
-            echo "未直接找到 site-packages，尝试查找 .serious_python 目录..."
-            SITE_PACKAGES=$(find build/flutter -type d -name ".serious_python" 2>/dev/null | head -n 1)
+            SITE_PACKAGES=$(find .. -type d -name ".serious_python" | head -n 1)
           fi
           if [ -z "$SITE_PACKAGES" ]; then
-            echo "尝试查找其他包含 site-packages 的目录..."
-            SITE_PACKAGES=$(find build -type d -name "site-packages" 2>/dev/null | head -n 1)
-          fi
-          if [ -z "$SITE_PACKAGES" ]; then
-            echo "❌ 未找到 site-packages 目录，列出 build/flutter 目录内容以调试："
-            find build/flutter -maxdepth 3 -type d | head -50
+            echo "❌ 未找到 site-packages 目录，列出目录内容："
+            find .. -maxdepth 4 -type d | grep -i python | head -20
             exit 1
           fi
           echo "✅ 找到 site-packages: $SITE_PACKAGES"
           echo "SERIOUS_PYTHON_SITE_PACKAGES=$SITE_PACKAGES" >> $GITHUB_ENV
 
-      - name: Build APK with Flutter directly (skip dependency validation)
+      - name: Build APK with Flutter directly
         run: |
           cd build/flutter
           flutter build apk --release --android-skip-build-dependency-validation
