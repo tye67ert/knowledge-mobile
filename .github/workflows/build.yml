@@ -33,53 +33,58 @@ jobs:
       - name: Accept Android licenses
         run: yes | flutter doctor --android-licenses
 
-      - name: Generate Flet project (will fail at Gradle, ignore)
+      - name: Generate Flet project (expected to fail at Gradle, ignore)
         run: |
           flet build apk --project main.py --org com.knowledge || true
 
       - name: Patch AGP, Kotlin, NDK versions and set SERIOUS_PYTHON_SITE_PACKAGES
         run: |
           cd build/flutter/android
-          echo "=== 修改前的 settings.gradle ==="
+
+          echo "=== 原始 settings.gradle 内容 ==="
           cat settings.gradle
-          echo "=== 修改前的 build.gradle ==="
-          cat build.gradle
-          echo "=== 执行版本替换 ==="
+
+          # 使用 Python 精确替换版本号
           python3 - <<'PY'
           import re
           from pathlib import Path
 
-          # 修改 settings.gradle 中的插件版本
+          # 处理 settings.gradle
           settings = Path('settings.gradle')
           content = settings.read_text()
-          # 替换 AGP 版本
-          content = re.sub(r'(com\.android\.application["\']?\s+version\s+["\']?)([^"\'\s]+)(["\']?)', r'\g<1>8.9.1\g<3>', content)
+
+          # 替换 AGP 版本（所有可能的旧版本）
+          content = re.sub(r'(id\s+["\']com\.android\.application["\']\s+version\s+["\'])([^"\']+)(["\'])',
+                           r'\g<1>8.9.1\g<3>', content)
+
           # 替换 Kotlin 版本
-          content = re.sub(r'(org\.jetbrains\.kotlin\.android["\']?\s+version\s+["\']?)([^"\'\s]+)(["\']?)', r'\g<1>2.2.0\g<3>', content)
+          content = re.sub(r'(id\s+["\']org\.jetbrains\.kotlin\.android["\']\s+version\s+["\'])([^"\']+)(["\'])',
+                           r'\g<1>2.2.0\g<3>', content)
+
           settings.write_text(content)
-          print("Patched settings.gradle:")
+          print("=== 修改后的 settings.gradle 内容 ===")
           print(content)
 
-          # 修改 build.gradle 中的 ext.kotlin_version
+          # 处理 build.gradle 中的 ext.kotlin_version
           build = Path('build.gradle')
           if build.exists():
               bcontent = build.read_text()
-              bcontent = re.sub(r'ext\.kotlin_version\s*=\s*["\']?[^"\'\s]+["\']?', 'ext.kotlin_version = "2.2.0"', bcontent)
+              bcontent = re.sub(r'ext\.kotlin_version\s*=\s*["\']([^"\']*)["\']',
+                                'ext.kotlin_version = "2.2.0"', bcontent)
               build.write_text(bcontent)
-              print("Patched build.gradle:")
+              print("=== 修改后的 build.gradle 内容 ===")
               print(bcontent)
 
-          # 修改 app/build.gradle 添加 ndkVersion
+          # 处理 app/build.gradle 添加 ndkVersion
           app = Path('app/build.gradle')
           if app.exists():
               acontent = app.read_text()
               if 'ndkVersion' not in acontent:
                   acontent = acontent.replace('android {', 'android {\n    ndkVersion "28.2.13676358"')
               app.write_text(acontent)
-              print("Patched app/build.gradle:")
-              print(acontent)
+              print("=== 修改后的 app/build.gradle 片段 ===")
+              print(acontent[:600])
           PY
-          echo "=== 版本替换完成 ==="
 
           # 添加 android.newDsl=false 避免 AGP 9 警告
           echo "android.newDsl=false" >> gradle.properties
