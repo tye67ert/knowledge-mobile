@@ -1,0 +1,9 @@
+# 构建产物
+build/
+# 虚拟环境
+venv/
+flet-env/
+# 日志
+*.log
+# macOS
+.DS_Store
