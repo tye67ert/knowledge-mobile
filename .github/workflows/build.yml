@@ -40,15 +40,17 @@ jobs:
       - name: Add permissions safely
         run: |
           MANIFEST="$GITHUB_WORKSPACE/build/flutter/android/app/src/main/AndroidManifest.xml"
+          export MANIFEST
           if [ ! -f "$MANIFEST" ]; then
-            echo "❌ 未找到 AndroidManifest.xml"
+            echo "❌ 未找到 AndroidManifest.xml，路径: $MANIFEST"
             exit 1
           fi
           python3 - <<'PY'
+          import os
           from pathlib import Path
           import re
 
-          manifest_path = Path("$MANIFEST")
+          manifest_path = Path(os.environ['MANIFEST'])
           content = manifest_path.read_text(encoding='utf-8')
 
           permissions = [
