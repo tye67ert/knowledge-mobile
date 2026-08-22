@@ -19,12 +19,12 @@ jobs:
           python-version: '3.10'
 
       - name: Install Flet
-        run: pip install flet==0.86.5
+        run: pip install flet==0.28.3
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.44.8'
+          flutter-version: '3.29.2'
           channel: 'stable'
 
       - name: Set Flutter SDK path
@@ -36,17 +36,12 @@ jobs:
       - name: Accept Android licenses
         run: yes | flutter doctor --android-licenses
 
-      - name: Generate Flet project (ignore initial Gradle failure)
-        run: flet build apk --project main.py --org com.knowledge || true
+      - name: Generate Flet project (ignore initial failure)
+        run: yes | flet build apk --project main.py --org com.knowledge || true
 
-      - name: Replace Gradle files and fix MainActivity
+      - name: Patch settings.gradle
         run: |
           cd build/flutter/android
-
-          # 删除所有 .kts 文件
-          find . -type f -name "*.kts" -delete
-
-          # 写入正确的 settings.gradle
           cat > settings.gradle <<'EOF'
           pluginManagement {
               def flutterSdkPath = {
@@ -67,124 +62,14 @@ jobs:
           plugins {
               id "dev.flutter.flutter-gradle-plugin" version "1.0.0" apply false
               id "com.android.application" version "8.9.1" apply false
-              id "org.jetbrains.kotlin.android" version "2.2.0" apply false
+              id "org.jetbrains.kotlin.android" version "1.9.24" apply false
           }
           include ":app"
           EOF
-
-          # 写入正确的 build.gradle
-          cat > build.gradle <<'EOF'
-          buildscript {
-              ext.kotlin_version = '2.2.0'
-              repositories {
-                  google()
-                  mavenCentral()
-              }
-              dependencies {
-                  classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
-              }
-          }
-          allprojects {
-              repositories {
-                  google()
-                  mavenCentral()
-              }
-          }
-          rootProject.buildDir = '../build'
-          subprojects {
-              project.buildDir = "${rootProject.buildDir}/${project.name}"
-          }
-          subprojects {
-              project.evaluationDependsOn(':app')
-          }
-          tasks.register("clean", Delete) {
-              delete rootProject.buildDir
-          }
-          EOF
-
-          # 写入正确的 app/build.gradle（统一包名）
-          cat > app/build.gradle <<'EOF'
-          plugins {
-              id "com.android.application"
-              id "kotlin-android"
-              id "dev.flutter.flutter-gradle-plugin"
-          }
-
-          def localProperties = new Properties()
-          def localPropertiesFile = rootProject.file('local.properties')
-          if (localPropertiesFile.exists()) {
-              localPropertiesFile.withReader('UTF-8') { reader ->
-                  localProperties.load(reader)
-              }
-          }
-
-          def flutterVersionCode = localProperties.getProperty('flutter.versionCode')
-          if (flutterVersionCode == null) {
-              flutterVersionCode = '1'
-          }
-          def flutterVersionName = localProperties.getProperty('flutter.versionName')
-          if (flutterVersionName == null) {
-              flutterVersionName = '1.0'
-          }
-
-          android {
-              namespace "com.knowledge.knowledge_mobile"
-              compileSdkVersion 36
-              ndkVersion "28.2.13676358"
-
-              compileOptions {
-                  sourceCompatibility JavaVersion.VERSION_17
-                  targetCompatibility JavaVersion.VERSION_17
-              }
-              kotlinOptions {
-                  jvmTarget = '17'
-              }
-
-              defaultConfig {
-                  applicationId "com.knowledge.knowledge_mobile"
-                  minSdkVersion 24
-                  targetSdkVersion 36
-                  versionCode flutterVersionCode.toInteger()
-                  versionName flutterVersionName
-              }
-
-              buildTypes {
-                  release {
-                      signingConfig signingConfigs.debug
-                  }
-              }
-          }
-
-          flutter {
-              source '../..'
-          }
-          EOF
-
-          # 删除所有旧的 MainActivity 文件
-          find app/src/main/kotlin -type f -name "MainActivity.kt" -delete
-
-          # 创建正确包名的 MainActivity.kt
-          mkdir -p app/src/main/kotlin/com/knowledge/knowledge_mobile
-          cat > app/src/main/kotlin/com/knowledge/knowledge_mobile/MainActivity.kt <<'EOF'
-          package com.knowledge.knowledge_mobile
-
-          import io.flutter.embedding.android.FlutterActivity
-
-          class MainActivity: FlutterActivity() {
-          }
-          EOF
-
-          # 更新 AndroidManifest.xml 中的 activity 名称
-          if [ -f app/src/main/AndroidManifest.xml ]; then
-            sed -i 's/android:name="[^"]*MainActivity"/android:name=".MainActivity"/' app/src/main/AndroidManifest.xml
-          fi
-
-          # 添加必要属性
+          # 确保 build.gradle 中 Kotlin 版本
+          sed -i 's/1\.9\.24/1\.9\.24/g; s/2\.0\.0/1\.9\.24/g' build.gradle
+          # 添加属性
           echo "android.newDsl=false" >> gradle.properties
-          echo "kotlin.version=2.2.0" >> gradle.properties
-
-          # 设置 serious_python 环境变量
-          echo "SERIOUS_PYTHON_SITE_PACKAGES=$(python3 -c 'import site; print(site.getsitepackages()[0])')" >> $GITHUB_ENV
 
       - name: Build APK with Flutter
         run: |
