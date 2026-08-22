@@ -159,7 +159,6 @@ class KnowledgeDB:
     def __init__(self):
         self.conn = None
         self.cursor = None
-        self.connect()
 
     def connect(self):
         if not os.path.exists(DB_PATH):
