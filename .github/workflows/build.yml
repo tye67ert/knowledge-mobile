@@ -37,16 +37,25 @@ jobs:
         run: |
           flet build apk --project main.py --org com.knowledge || true
 
-      - name: Find and set SERIOUS_PYTHON_SITE_PACKAGES
+      - name: Patch AGP, Kotlin, and NDK versions
         run: |
-          # 查找 site-packages 目录（通常在 build/flutter 下）
-          SITE_PACKAGES=$(find build/flutter -type d -name "site-packages" | head -n 1)
-          if [ -z "$SITE_PACKAGES" ]; then
-            echo "未找到 site-packages 目录，尝试查找其他位置..."
-            SITE_PACKAGES=$(find build -type d -name "site-packages" | head -n 1)
-          fi
-          echo "找到 site-packages: $SITE_PACKAGES"
-          echo "SERIOUS_PYTHON_SITE_PACKAGES=$SITE_PACKAGES" >> $GITHUB_ENV
+          cd build/flutter/android
+          # 全局替换 AGP 版本为 8.9.1
+          sed -i 's/8\.3\.1/8\.9\.1/g' settings.gradle build.gradle app/build.gradle
+          # 全局替换 Kotlin 版本为 2.0.21
+          sed -i 's/1\.9\.24/2\.0\.21/g' settings.gradle build.gradle app/build.gradle
+          # 添加 ndkVersion 到 app/build.gradle 的 android 块内
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('app/build.gradle')
+          content = p.read_text()
+          if 'ndkVersion' not in content:
+              content = content.replace('android {', 'android {\n    ndkVersion "28.2.13676358"')
+          p.write_text(content)
+          print(content)
+          PY
+          # 添加 android.newDsl=false 避免 AGP 9 警告
+          echo "android.newDsl=false" >> gradle.properties
 
       - name: Build APK with Flutter directly (skip dependency validation)
         run: |
