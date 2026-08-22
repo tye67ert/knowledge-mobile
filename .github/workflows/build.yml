@@ -10,22 +10,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v5
+      - uses: actions/setup-java@v5
         with:
           java-version: '17'
           distribution: 'temurin'
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
       - name: Install Flet
-        run: |
-          python -m pip install --upgrade pip
-          pip install flet==0.86.5
+        run: pip install flet==0.86.5
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
@@ -33,7 +27,7 @@ jobs:
           flutter-version: '3.44.8'
           channel: 'stable'
 
-      - name: Set Flutter SDK path for Flet
+      - name: Set Flutter SDK path
         run: |
           echo "FLET_FLUTTER_SDK_PATH=${{ env.FLUTTER_ROOT }}" >> $GITHUB_ENV
           echo "FLUTTER_ROOT=${{ env.FLUTTER_ROOT }}" >> $GITHUB_ENV
@@ -42,72 +36,132 @@ jobs:
       - name: Accept Android licenses
         run: yes | flutter doctor --android-licenses
 
-      # 第一次运行 Flet：生成项目但会因 AGP 版本失败，忽略
-      - name: Generate Flet project (ignore initial Gradle failure)
-        run: |
-          flet build apk --project main.py --org com.knowledge || true
+      - name: Generate Flet project (ignore initial failure)
+        run: flet build apk --project main.py --org com.knowledge || true
 
-      # 修补生成的 Android 项目文件
-      - name: Patch Gradle files
+      - name: Replace Gradle files with correct versions
         run: |
           cd build/flutter/android
 
-          python3 - <<'PY'
-          import re
-          from pathlib import Path
+          # 删除所有 .kts 文件，只使用 .gradle
+          find . -type f -name "*.kts" -delete
 
-          # 修补 settings.gradle
-          settings = Path('settings.gradle')
-          content = settings.read_text()
-          # AGP 升级到 8.9.1
-          content = re.sub(r'(id\s+["\']com\.android\.application["\']\s+version\s+["\'])([^"\']+)(["\'])',
-                           r'\g<1>8.9.1\g<3>', content)
-          # Kotlin 插件版本升级到 2.2.0（如果已有）
-          content = re.sub(r'(id\s+["\']org\.jetbrains\.kotlin\.android["\']\s+version\s+["\'])([^"\']+)(["\'])',
-                           r'\g<1>2.2.0\g<3>', content)
-          # 如果 plugins 块缺少 Kotlin 插件，则添加
-          if 'org.jetbrains.kotlin.android' not in content:
-              content = content.replace('plugins {',
-                                        'plugins {\n    id "org.jetbrains.kotlin.android" version "2.2.0" apply false', 1)
-          settings.write_text(content)
-          print("✅ settings.gradle 已修补")
+          # 写入正确的 settings.gradle
+          cat > settings.gradle <<'EOF'
+          pluginManagement {
+              def flutterSdkPath = {
+                  def properties = new Properties()
+                  file("local.properties").withInputStream { properties.load(it) }
+                  def flutterSdkPath = properties.getProperty("flutter.sdk")
+                  assert flutterSdkPath != null, "flutter.sdk not set in local.properties"
+                  return flutterSdkPath
+              }
+              settings.ext.flutterSdkPath = flutterSdkPath()
+              includeBuild("${settings.ext.flutterSdkPath}/packages/flutter_tools/gradle")
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          plugins {
+              id "dev.flutter.flutter-gradle-plugin" version "1.0.0" apply false
+              id "com.android.application" version "8.9.1" apply false
+              id "org.jetbrains.kotlin.android" version "2.2.0" apply false
+          }
+          include ":app"
+          EOF
 
-          # 修补 build.gradle 中的 ext.kotlin_version
-          build = Path('build.gradle')
-          if build.exists():
-              bcontent = build.read_text()
-              bcontent = re.sub(r'ext\.kotlin_version\s*=\s*["\']([^"\']*)["\']',
-                                'ext.kotlin_version = "2.2.0"', bcontent)
-              build.write_text(bcontent)
-              print("✅ build.gradle 已修补")
+          # 写入正确的 build.gradle
+          cat > build.gradle <<'EOF'
+          buildscript {
+              ext.kotlin_version = '2.2.0'
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+              dependencies {
+                  classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
+              }
+          }
+          allprojects {
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.buildDir = '../build'
+          subprojects {
+              project.buildDir = "${rootProject.buildDir}/${project.name}"
+          }
+          subprojects {
+              project.evaluationDependsOn(':app')
+          }
+          tasks.register("clean", Delete) {
+              delete rootProject.buildDir
+          }
+          EOF
 
-          # 修补 app/build.gradle：添加 ndkVersion 并升级 Kotlin 插件
-          app = Path('app/build.gradle')
-          if app.exists():
-              acontent = app.read_text()
-              # 升级 Kotlin 插件版本
-              acontent = re.sub(r'(id\s+["\']org\.jetbrains\.kotlin\.android["\']\s+version\s+["\'])([^"\']+)(["\'])',
-                                r'\g<1>2.2.0\g<3>', acontent)
-              # 添加 ndkVersion
-              if 'ndkVersion' not in acontent:
-                  acontent = acontent.replace('android {', 'android {\n    ndkVersion "28.2.13676358"')
-              app.write_text(acontent)
-              print("✅ app/build.gradle 已修补")
-          PY
+          # 写入正确的 app/build.gradle
+          cat > app/build.gradle <<'EOF'
+          plugins {
+              id "com.android.application"
+              id "kotlin-android"
+              id "dev.flutter.flutter-gradle-plugin"
+          }
 
-          # 添加 android.newDsl=false 避免 AGP 9 警告
+          def localProperties = new Properties()
+          def localPropertiesFile = rootProject.file('local.properties')
+          if (localPropertiesFile.exists()) {
+              localPropertiesFile.withReader('UTF-8') { reader ->
+                  localProperties.load(reader)
+              }
+          }
+
+          def flutterVersionCode = localProperties.getProperty('flutter.versionCode')
+          if (flutterVersionCode == null) {
+              flutterVersionCode = '1'
+          }
+          def flutterVersionName = localProperties.getProperty('flutter.versionName')
+          if (flutterVersionName == null) {
+              flutterVersionName = '1.0'
+          }
+
+          android {
+              namespace "com.example.knowledge_mobile"
+              compileSdkVersion 36
+              ndkVersion "28.2.13676358"
+
+              defaultConfig {
+                  applicationId "com.knowledge.knowledge_mobile"
+                  minSdkVersion 24
+                  targetSdkVersion 36
+                  versionCode flutterVersionCode.toInteger()
+                  versionName flutterVersionName
+              }
+
+              buildTypes {
+                  release {
+                      signingConfig signingConfigs.debug
+                  }
+              }
+          }
+
+          flutter {
+              source '../..'
+          }
+          EOF
+
+          # 添加必要属性
           echo "android.newDsl=false" >> gradle.properties
+          echo "kotlin.version=2.2.0" >> gradle.properties
 
-      # 设置 SERIOUS_PYTHON_SITE_PACKAGES 并构建
-      - name: Set environment and build APK
+          # 设置 serious_python 环境变量
+          echo "SERIOUS_PYTHON_SITE_PACKAGES=$(python3 -c 'import site; print(site.getsitepackages()[0])')" >> $GITHUB_ENV
+
+      - name: Build APK with Flutter
         run: |
-          # 确保 flutter 在 PATH
           export PATH="$FLUTTER_ROOT/bin:$PATH"
-
-          # 设置 SERIOUS_PYTHON_SITE_PACKAGES（使用系统 Python site-packages）
-          export SERIOUS_PYTHON_SITE_PACKAGES=$(python3 -c 'import site; print(site.getsitepackages()[0])')
-          echo "SERIOUS_PYTHON_SITE_PACKAGES=$SERIOUS_PYTHON_SITE_PACKAGES"
-
           cd build/flutter
           flutter build apk --release --android-skip-build-dependency-validation
 
