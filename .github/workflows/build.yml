@@ -36,14 +36,14 @@ jobs:
       - name: Accept Android licenses
         run: yes | flutter doctor --android-licenses
 
-      - name: Generate Flet project (ignore initial failure)
+      - name: Generate Flet project (ignore initial Gradle failure)
         run: flet build apk --project main.py --org com.knowledge || true
 
       - name: Replace Gradle files with correct versions
         run: |
           cd build/flutter/android
 
-          # 删除所有 .kts 文件，只使用 .gradle
+          # 删除所有 .kts 文件，避免 Gradle 混淆
           find . -type f -name "*.kts" -delete
 
           # 写入正确的 settings.gradle
@@ -102,7 +102,7 @@ jobs:
           }
           EOF
 
-          # 写入正确的 app/build.gradle
+          # 写入正确的 app/build.gradle（包含 JVM 目标一致设置）
           cat > app/build.gradle <<'EOF'
           plugins {
               id "com.android.application"
@@ -131,6 +131,14 @@ jobs:
               namespace "com.example.knowledge_mobile"
               compileSdkVersion 36
               ndkVersion "28.2.13676358"
+
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_17
+                  targetCompatibility JavaVersion.VERSION_17
+              }
+              kotlinOptions {
+                  jvmTarget = '17'
+              }
 
               defaultConfig {
                   applicationId "com.knowledge.knowledge_mobile"
