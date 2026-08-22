@@ -10,24 +10,30 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-java@v5
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
         with:
           java-version: '17'
           distribution: 'temurin'
-      - uses: actions/setup-python@v5
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
-      - name: Install Flet
-        run: pip install flet==0.28.3
+      - name: Install Flet 0.28.3
+        run: |
+          python -m pip install --upgrade pip
+          pip install flet==0.28.3
 
-      - name: Setup Flutter
+      - name: Set up Flutter 3.29.2
         uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.29.2'
           channel: 'stable'
 
-      - name: Set environment
+      - name: Set environment for Flet
         run: |
           echo "FLET_FLUTTER_SDK_PATH=${{ env.FLUTTER_ROOT }}" >> $GITHUB_ENV
           echo "FLUTTER_ROOT=${{ env.FLUTTER_ROOT }}" >> $GITHUB_ENV
@@ -36,21 +42,56 @@ jobs:
       - name: Accept Android licenses
         run: yes | flutter doctor --android-licenses
 
-      - name: Generate Flet project (ignore initial failure)
+      # 第一次构建：生成项目但可能因缺少权限或依赖失败，忽略
+      - name: Generate project (ignore failure)
         run: |
+          cd $GITHUB_WORKSPACE
           yes | flet build apk --project main.py --org com.knowledge || true
 
-      - name: Upgrade Gradle wrapper
+      # 注入所有需要的权限到 AndroidManifest.xml
+      - name: Add all necessary permissions
         run: |
-          WRAPPER_FILE="build/flutter/android/gradle/wrapper/gradle-wrapper.properties"
-          if [ -f "$WRAPPER_FILE" ]; then
-            sed -i 's/gradle-8\.7-all\.zip/gradle-8\.11\.1-all\.zip/g' "$WRAPPER_FILE"
-            echo "✅ Gradle wrapper 已升级到 8.11.1"
+          MANIFEST="$GITHUB_WORKSPACE/build/flutter/android/app/src/main/AndroidManifest.xml"
+          if [ -f "$MANIFEST" ]; then
+            # 定义权限列表（可根据需要增删）
+            PERMISSIONS=(
+              "android.permission.READ_EXTERNAL_STORAGE"
+              "android.permission.WRITE_EXTERNAL_STORAGE"
+              "android.permission.MANAGE_EXTERNAL_STORAGE"
+              "android.permission.INTERNET"
+              "android.permission.ACCESS_NETWORK_STATE"
+              "android.permission.ACCESS_WIFI_STATE"
+              "android.permission.CHANGE_WIFI_STATE"
+              "android.permission.CAMERA"
+              "android.permission.RECORD_AUDIO"
+              "android.permission.ACCESS_FINE_LOCATION"
+              "android.permission.ACCESS_COARSE_LOCATION"
+              "android.permission.READ_PHONE_STATE"
+              "android.permission.BLUETOOTH"
+              "android.permission.BLUETOOTH_ADMIN"
+              "android.permission.BLUETOOTH_CONNECT"
+              "android.permission.BLUETOOTH_SCAN"
+              "android.permission.POST_NOTIFICATIONS"
+              "android.permission.VIBRATE"
+              "android.permission.WAKE_LOCK"
+              "android.permission.REQUEST_INSTALL_PACKAGES"
+              "android.permission.FOREGROUND_SERVICE"
+            )
+            # 在 <manifest> 标签内插入权限（避免重复）
+            for perm in "${PERMISSIONS[@]}"; do
+              if ! grep -q "$perm" "$MANIFEST"; then
+                sed -i "/<manifest /a\\    <uses-permission android:name=\"$perm\" />" "$MANIFEST"
+              fi
+            done
+            echo "✅ 所有权限已添加"
+            # 打印前几行验证
+            head -40 "$MANIFEST"
           else
-            echo "⚠️ 未找到 gradle-wrapper.properties，尝试其他路径"
-            find build -name "gradle-wrapper.properties" -exec sed -i 's/gradle-8\.7-all\.zip/gradle-8\.11\.1-all\.zip/g' {} \;
+            echo "❌ 未找到 AndroidManifest.xml，路径: $MANIFEST"
+            exit 1
           fi
 
+      # 第二次构建：项目已含全部权限，应该能成功
       - name: Build APK (final)
         run: |
           cd $GITHUB_WORKSPACE
