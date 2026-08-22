@@ -1,38 +1,54 @@
 name: Build APK
+
 on:
   push:
     branches: [ main ]
   workflow_dispatch:
+
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Java 11
+        uses: actions/setup-java@v4
         with:
-          python-version: '3.10'
-      - name: Install dependencies
+          distribution: 'temurin'
+          java-version: '11'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.16.x'
+          channel: 'stable'
+
+      - name: Enable Flutter Linux Desktop
+        run: flutter config --enable-linux-desktop
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install flet==0.80.0
-      - name: Install Flutter SDK (required by Flet 0.80.0)
-        run: |
-          git clone https://github.com/flutter/flutter.git -b 3.22.0 --depth 1 $GITHUB_WORKSPACE/flutter
-          echo "$GITHUB_WORKSPACE/flutter/bin" >> $GITHUB_PATH
-          echo "FLET_FLUTTER_SDK_PATH=$GITHUB_WORKSPACE/flutter" >> $GITHUB_ENV
-          echo "FLUTTER_ROOT=$GITHUB_WORKSPACE/flutter" >> $GITHUB_ENV
-      - name: Accept Android licenses
-        run: |
-          export PATH="$GITHUB_WORKSPACE/flutter/bin:$PATH"
-          yes | flutter doctor --android-licenses
+          pip install flet==0.23.0
+
       - name: Build APK
+        env:
+          FLET_YES: 1
         run: |
-          export PATH="$GITHUB_WORKSPACE/flutter/bin:$PATH"
-          export FLET_FLUTTER_SDK_PATH="$GITHUB_WORKSPACE/flutter"
-          export FLUTTER_ROOT="$GITHUB_WORKSPACE/flutter"
-          flet build apk --project main.py --org com.knowledge
+          flet build apk --org com.yourcompany --product "知识图谱" --yes
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: knowledge-apk
+          name: knowledge-graph-app
           path: build/apk/*.apk
