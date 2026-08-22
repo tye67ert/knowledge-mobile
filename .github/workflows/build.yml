@@ -40,9 +40,31 @@ jobs:
       - name: Patch AGP and Kotlin versions
         run: |
           cd build/flutter/android
-          sed -i 's/8\.3\.1/8\.6\.0/g' settings.gradle
-          sed -i 's/1\.9\.24/2\.0\.21/g' settings.gradle
-          echo "android.newDsl=false" >> gradle.properties
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          settings = Path('settings.gradle')
+          content = settings.read_text()
+
+          # 升级 AGP 版本
+          content = re.sub(r'(id\s+["\']com\.android\.application["\']\s+version\s+["\'])([^"\']+)(["\'])', r'\g<1>8.6.0\g<3>', content)
+
+          # 升级 Kotlin 版本
+          content = re.sub(r'(id\s+["\']org\.jetbrains\.kotlin\.android["\']\s+version\s+["\'])([^"\']+)(["\'])', r'\g<1>2.0.21\g<3>', content)
+
+          settings.write_text(content)
+          print("Patched settings.gradle:")
+          print(content)
+
+          prop = Path('gradle.properties')
+          prop_text = prop.read_text() if prop.exists() else ''
+          if 'android.newDsl' not in prop_text:
+              prop_text += '\nandroid.newDsl=false\n'
+          prop.write_text(prop_text)
+          print("Patched gradle.properties:")
+          print(prop_text)
+          PY
 
       - name: Build APK with Flutter directly
         run: |
