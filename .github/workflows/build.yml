@@ -37,6 +37,17 @@ jobs:
         run: |
           flet build apk --project main.py --org com.knowledge || true
 
+      - name: Find and set SERIOUS_PYTHON_SITE_PACKAGES
+        run: |
+          # 查找 site-packages 目录（通常在 build/flutter 下）
+          SITE_PACKAGES=$(find build/flutter -type d -name "site-packages" | head -n 1)
+          if [ -z "$SITE_PACKAGES" ]; then
+            echo "未找到 site-packages 目录，尝试查找其他位置..."
+            SITE_PACKAGES=$(find build -type d -name "site-packages" | head -n 1)
+          fi
+          echo "找到 site-packages: $SITE_PACKAGES"
+          echo "SERIOUS_PYTHON_SITE_PACKAGES=$SITE_PACKAGES" >> $GITHUB_ENV
+
       - name: Build APK with Flutter directly (skip dependency validation)
         run: |
           cd build/flutter
