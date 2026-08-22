@@ -37,43 +37,57 @@ jobs:
         run: |
           cd $GITHUB_WORKSPACE
           yes | flet build apk --project main.py --org com.knowledge || true
-      - name: Add all permissions
+      - name: Add permissions safely
         run: |
           MANIFEST="$GITHUB_WORKSPACE/build/flutter/android/app/src/main/AndroidManifest.xml"
-          if [ -f "$MANIFEST" ]; then
-            PERMS=(
-              "android.permission.READ_EXTERNAL_STORAGE"
-              "android.permission.WRITE_EXTERNAL_STORAGE"
-              "android.permission.MANAGE_EXTERNAL_STORAGE"
-              "android.permission.INTERNET"
-              "android.permission.ACCESS_NETWORK_STATE"
-              "android.permission.ACCESS_WIFI_STATE"
-              "android.permission.CHANGE_WIFI_STATE"
-              "android.permission.CAMERA"
-              "android.permission.RECORD_AUDIO"
-              "android.permission.ACCESS_FINE_LOCATION"
-              "android.permission.ACCESS_COARSE_LOCATION"
-              "android.permission.READ_PHONE_STATE"
-              "android.permission.BLUETOOTH"
-              "android.permission.BLUETOOTH_ADMIN"
-              "android.permission.BLUETOOTH_CONNECT"
-              "android.permission.BLUETOOTH_SCAN"
-              "android.permission.POST_NOTIFICATIONS"
-              "android.permission.VIBRATE"
-              "android.permission.WAKE_LOCK"
-              "android.permission.REQUEST_INSTALL_PACKAGES"
-              "android.permission.FOREGROUND_SERVICE"
-            )
-            for perm in "${PERMS[@]}"; do
-              if ! grep -q "$perm" "$MANIFEST"; then
-                sed -i "/<manifest /a\    <uses-permission android:name="$perm" />" "$MANIFEST"
-              fi
-            done
-            echo "✅ 权限已添加"
-          else
+          if [ ! -f "$MANIFEST" ]; then
             echo "❌ 未找到 AndroidManifest.xml"
             exit 1
           fi
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          manifest_path = Path("$MANIFEST")
+          content = manifest_path.read_text(encoding='utf-8')
+
+          permissions = [
+              "android.permission.READ_EXTERNAL_STORAGE",
+              "android.permission.WRITE_EXTERNAL_STORAGE",
+              "android.permission.MANAGE_EXTERNAL_STORAGE",
+              "android.permission.INTERNET",
+              "android.permission.ACCESS_NETWORK_STATE",
+              "android.permission.ACCESS_WIFI_STATE",
+              "android.permission.CHANGE_WIFI_STATE",
+              "android.permission.CAMERA",
+              "android.permission.RECORD_AUDIO",
+              "android.permission.ACCESS_FINE_LOCATION",
+              "android.permission.ACCESS_COARSE_LOCATION",
+              "android.permission.READ_PHONE_STATE",
+              "android.permission.BLUETOOTH",
+              "android.permission.BLUETOOTH_ADMIN",
+              "android.permission.BLUETOOTH_CONNECT",
+              "android.permission.BLUETOOTH_SCAN",
+              "android.permission.POST_NOTIFICATIONS",
+              "android.permission.VIBRATE",
+              "android.permission.WAKE_LOCK",
+              "android.permission.REQUEST_INSTALL_PACKAGES",
+              "android.permission.FOREGROUND_SERVICE",
+          ]
+
+          # 删除已存在的相同权限，避免重复
+          for perm in permissions:
+              content = re.sub(rf'\s*<uses-permission android:name="{re.escape(perm)}"\s*/>', '', content)
+
+          # 在 <manifest 开始标签之后插入权限
+          insert_index = content.find('>', content.find('<manifest'))
+          if insert_index != -1:
+              perms_str = '\n' + '\n'.join(f'    <uses-permission android:name="{perm}" />' for perm in permissions) + '\n'
+              content = content[:insert_index+1] + perms_str + content[insert_index+1:]
+
+          manifest_path.write_text(content, encoding='utf-8')
+          print("✅ 权限已安全添加")
+          PY
       - name: Build APK (final)
         run: |
           cd $GITHUB_WORKSPACE
